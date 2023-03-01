@@ -17,7 +17,7 @@ npm i -S electron-fcm-push-receiver
 - In `main.js` / in main process :
 
 ```javascript
-const pushReceiver = require('electron-push-receiver');
+const pushReceiver = require('electron-fcm-push-receiver');
 
 // Call it before 'did-finish-load' with mainWindow a reference to your window
 pushReceiver.setupPushReceiver(mainWindow.webContents);
