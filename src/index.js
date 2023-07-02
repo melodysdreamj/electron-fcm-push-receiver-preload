@@ -1,5 +1,5 @@
 const { register, listen } = require('push-receiver');
-const { ipcMain } = require('electron');
+const { ipcMain, webContents } = require('electron');
 const Config = require('electron-config');
 const {
   START_NOTIFICATION_SERVICE,
@@ -21,63 +21,54 @@ module.exports = {
   reset,
 };
 
-// To be sure that start is called only once
 let started = false;
 
-// To be call from the main process
+function sendToPreload(event, arg) {
+  // 주의: webContents.getAllWebContents() 는 모든 webContents를 반환합니다. 여기서 필요한 것은 단지 전달하려는 특정 webContents입니다.
+  webContents.getAllWebContents().forEach(wc => {
+    wc.send(event, arg);
+  });
+}
+
 function setup(webContents) {
-  // Will be called by the renderer process
   ipcMain.on(START_NOTIFICATION_SERVICE, async (_, senderId) => {
-    // Retrieve saved credentials
     let credentials = config.get('credentials');
-    // Retrieve saved senderId
     const savedSenderId = config.get('senderId');
     if (started) {
-      webContents.send(NOTIFICATION_SERVICE_STARTED, ((credentials && credentials.fcm) || {}).token);
+      sendToPreload(NOTIFICATION_SERVICE_STARTED, ((credentials && credentials.fcm) || {}).token);
       return;
     }
     started = true;
     try {
-      // Retrieve saved persistentId : avoid receiving all already received notifications on start
       const persistentIds = config.get('persistentIds') || [];
-      // Register if no credentials or if senderId has changed
       if (!credentials || savedSenderId !== senderId) {
         credentials = await register(senderId);
-        // Save credentials for later use
         config.set('credentials', credentials);
-        // Save senderId
         config.set('senderId', senderId);
-        // Notify the renderer process that the FCM token has changed
-        webContents.send(TOKEN_UPDATED, credentials.fcm.token);
+        sendToPreload(TOKEN_UPDATED, credentials.fcm.token);
       }
-      // Listen for GCM/FCM notifications
       await listen(Object.assign({}, credentials, { persistentIds }), onNotification(webContents));
-      // Notify the renderer process that we are listening for notifications
-      webContents.send(NOTIFICATION_SERVICE_STARTED, credentials.fcm.token);
+      sendToPreload(NOTIFICATION_SERVICE_STARTED, credentials.fcm.token);
     } catch (e) {
       console.error('PUSH_RECEIVER:::Error while starting the service', e);
-      // Forward error to the renderer process
-      webContents.send(NOTIFICATION_SERVICE_ERROR, e.message);
+      sendToPreload(NOTIFICATION_SERVICE_ERROR, e.message);
     }
   });
 }
-// Called in the disconnect
+
 function reset() {
   config.set('credentials', null);
   config.set('senderId', null);
   config.set('persistentIds', null);
   started = false;
 }
-// Will be called on new notification
+
 function onNotification(webContents) {
   return ({ notification, persistentId }) => {
     const persistentIds = config.get('persistentIds') || [];
-    // Update persistentId
     config.set('persistentIds', [...persistentIds, persistentId]);
-    // Notify the renderer process that a new notification has been received
-    // And check if window is not destroyed for darwin Apps
     if(!webContents.isDestroyed()){
-      webContents.send(NOTIFICATION_RECEIVED, notification);
+      sendToPreload(NOTIFICATION_RECEIVED, notification);
     }
   };
 }
